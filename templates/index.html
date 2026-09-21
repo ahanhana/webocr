@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>文本提取器</title>
+<style>
+  :root {
+    --primary: #4f6ef7; --bg: #10131c; --card: #1a1e2a; --border: #2a3042;
+    --text: #e8eaf2; --muted: #8a91a5; --danger: #e5484d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: var(--bg); color: var(--text);
+    height: 100vh; height: 100dvh;   /* dvh 适配移动端地址栏收起/展开 */
+    overflow: hidden;
+  }
+  .app { max-width: 480px; margin: 0 auto; height: 100%; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; }
+  header .logo {
+    width: 34px; height: 34px; border-radius: 10px; flex: none;
+    background: linear-gradient(135deg, var(--primary), #7c5cf5);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 17px; font-weight: bold;
+  }
+  h1 { font-size: 17px; letter-spacing: 1px; }
+
+  /* ---------- 主画面：竖向摄像头 ---------- */
+  .stage {
+    position: relative; margin: 0 12px 12px; border-radius: 16px; overflow: hidden;
+    background: #000; flex: 1; min-height: 0; box-shadow: 0 6px 24px rgba(0,0,0,.45);
+  }
+  #video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+  #camMask {
+    position: absolute; inset: 0; background: #000; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  }
+  #camMask .play {
+    width: 74px; height: 74px; border-radius: 50%;
+    background: rgba(255,255,255,.10); border: 2px solid rgba(255,255,255,.55);
+    display: flex; align-items: center; justify-content: center; transition: background .15s;
+  }
+  #camMask:hover .play { background: rgba(255,255,255,.2); }
+  #camMask .play::after {
+    content: ""; margin-left: 7px;
+    border-left: 24px solid #fff; border-top: 14px solid transparent; border-bottom: 14px solid transparent;
+  }
+  #camMask .tip { font-size: 12px; color: rgba(255,255,255,.5); }
+
+  /* ---------- 底部悬浮控制条：左扫描识别 / 中快门 / 右菜单 ---------- */
+  .bottom-bar {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    display: flex; align-items: center; justify-content: space-between; padding: 0 26px 20px;
+  }
+  .shutter {
+    width: 66px; height: 66px; border-radius: 50%; border: none; background: #fff;
+    box-shadow: 0 0 0 4px rgba(255,255,255,.28), 0 4px 16px rgba(0,0,0,.5);
+    cursor: pointer; transition: transform .12s, opacity .15s;
+  }
+  .shutter:active:not(:disabled) { transform: scale(.9); }
+  .shutter:disabled { opacity: .3; cursor: not-allowed; }
+  .icon-btn {
+    width: 46px; height: 46px; border: none; border-radius: 50%;
+    background: rgba(0,0,0,.4); cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  }
+  .icon-btn span { display: block; width: 18px; height: 2px; border-radius: 2px; background: #fff; }
+  .icon-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+  #status {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    max-width: 86%; background: rgba(0,0,0,.6); color: #fff;
+    font-size: 12px; padding: 6px 14px; border-radius: 99px;
+    display: none; z-index: 25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* ---------- 历史记录半屏面板：左预览图 / 右文本对照 ---------- */
+  .page {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+    max-width: 480px; margin: 0 auto; height: 50%;
+    background: var(--bg); border-radius: 18px 18px 0 0;
+    box-shadow: 0 -8px 30px rgba(0,0,0,.5);
+    display: flex; flex-direction: column; overflow: hidden;
+    transform: translateY(105%);
+    transition: transform .25s ease, height .25s ease;
+  }
+  .page.show { transform: translateY(0); }
+  .page.full { height: 100%; border-radius: 0; }
+  .grabber-wrap { display: flex; justify-content: center; padding: 9px 0 2px; cursor: pointer; flex: none; }
+  .grabber { width: 42px; height: 4px; border-radius: 2px; background: #3a4157; }
+  .page-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px 10px; flex: none; }
+  .cam-toggle {
+    border: 1px solid var(--border); border-radius: 99px; padding: 8px 16px;
+    background: var(--card); color: var(--text); font-size: 13px; font-family: inherit; cursor: pointer;
+  }
+  .cam-toggle:hover { background: #232938; }
+  .back-btn {
+    width: 34px; height: 34px; border: none; border-radius: 50%; flex: none;
+    background: var(--card); color: var(--text); font-size: 15px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .back-btn:hover { background: #232938; }
+  .page-body { flex: 1; overflow-y: auto; padding: 0 12px 20px; }
+  #historyList { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--card); }
+  #historyList .empty { padding: 26px; text-align: center; font-size: 13px; color: var(--muted); }
+  .row { display: grid; grid-template-columns: 110px 1fr; border-bottom: 1px solid var(--border); }
+  .row:last-child { border-bottom: none; }
+  .row img { width: 100%; height: 96px; object-fit: cover; display: block; cursor: zoom-in; }
+  .row .cell { min-width: 0; display: flex; flex-direction: column; }
+  .row .meta { font-size: 10px; color: var(--muted); padding: 6px 10px 0; }
+  .row .txt {
+    flex: 1; padding: 4px 10px 8px; font-size: 12px; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-all; overflow: auto; max-height: 88px; cursor: pointer;
+  }
+  .row .txt.empty { color: var(--muted); display: flex; align-items: center; }
+
+  /* ---------- 拍照动效：照片缩小飞入右侧菜单按钮 ---------- */
+  .fly-thumb {
+    position: fixed; z-index: 90; object-fit: cover; border-radius: 12px;
+    pointer-events: none; box-shadow: 0 6px 20px rgba(0,0,0,.5);
+    transition: transform .55s cubic-bezier(.45,.05,.3,1), opacity .55s, border-radius .55s;
+  }
+  @keyframes menuPop {
+    0% { transform: scale(1); } 40% { transform: scale(1.25); } 100% { transform: scale(1); }
+  }
+  .icon-btn.pop { animation: menuPop .35s ease; }
+
+  /* ---------- 大图预览 ---------- */
+  .preview-mask {
+    position: fixed; inset: 0; background: rgba(0,0,0,.9);
+    display: none; align-items: center; justify-content: center; z-index: 100; cursor: zoom-out;
+  }
+  .preview-mask img { max-width: 94vw; max-height: 94vh; border-radius: 8px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo">文</div>
+    <h1>文本提取器</h1>
+  </header>
+
+  <div class="stage">
+    <video id="video" autoplay playsinline muted></video>
+    <div id="camMask"><div class="play"></div><div class="tip">点击开启实时取景（微信内不支持，请使用手机内置浏览器打开本页）</div></div>
+    <div id="status"></div>
+
+    <div class="bottom-bar">
+      <button id="btnScanOcr" class="icon-btn" aria-label="拍照并识别" title="拍照并识别">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">
+          <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/>
+          <path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+          <line x1="4" y1="12" x2="20" y2="12"/>
+        </svg>
+      </button>
+      <button id="btnShot" class="shutter" aria-label="拍照"></button>
+      <button id="btnMenu" class="icon-btn" aria-label="历史记录"><span></span><span></span><span></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- 历史记录半屏面板 -->
+<div class="page" id="historyPage">
+  <div class="grabber-wrap" id="sheetGrabber" title="上滑展开 / 下滑收起"><div class="grabber"></div></div>
+  <div class="page-head">
+    <button id="camToggle" class="cam-toggle">开启摄像头</button>
+    <button id="btnBack" class="back-btn" aria-label="返回">✕</button>
+  </div>
+  <div class="page-body">
+    <div id="historyList"><div class="empty">暂无记录</div></div>
+  </div>
+</div>
+
+<div class="preview-mask" id="mask"><img id="maskImg" alt="预览"></div>
+<canvas id="shotCanvas" style="display:none"></canvas>
+
+<script>
+const $ = id => document.getElementById(id);
+
+// ---------- 状态提示 ----------
+const statusEl = $("status");
+let statusTimer = null;
+function status(msg, err, sticky) {
+  statusEl.textContent = msg;
+  statusEl.style.display = msg ? "block" : "none";
+  statusEl.style.color = err ? "#ff8085" : "#fff";
+  clearTimeout(statusTimer);
+  if (!sticky) statusTimer = setTimeout(() => (statusEl.style.display = "none"), 3000);
+}
+
+let stream = null;
+
+// ---------- IndexedDB 本地缓存：历史图片 + 识别文本 ----------
+const DB_NAME = "webocr-cache", STORE = "shots";
+function openDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(STORE, { keyPath: "id" });
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function dbSave(rec) {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).put(rec);
+    tx.oncomplete = res;
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function dbAll() {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const req = db.transaction(STORE).objectStore(STORE).getAll();
+    req.onsuccess = () => res((req.result || []).sort((a, b) => b.ctime - a.ctime));
+    req.onerror = () => rej(req.error);
+  });
+}
+
+// ---------- 摄像头 ----------
+function syncCamToggle() {
+  $("camToggle").textContent = stream ? "关闭摄像头" : "开启摄像头";
+}
+const isWeChat = /MicroMessenger/i.test(navigator.userAgent);   // 微信内置浏览器不支持摄像头
+async function startCam() {
+  if (stream) return;
+  if (isWeChat) { status("微信内无法调用摄像头，请使用手机内置浏览器打开本页", true); return; }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    status("当前环境不支持摄像头，请使用手机内置浏览器打开本页", true);
+    return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 720 }, height: { ideal: 1280 }, facingMode: "environment" },
+    });
+    $("video").srcObject = stream;
+    $("camMask").style.display = "none";
+    syncCamToggle();
+    status("摄像头已开启");
+  } catch (e) {
+    status("无法开启摄像头：" + e.message + "，可直接点击拍照/识别调起系统相机", true);
+  }
+}
+function stopCam() {
+  stream?.getTracks().forEach(t => t.stop());
+  stream = null;
+  $("video").srcObject = null;
+  $("camMask").style.display = "flex";
+  syncCamToggle();
+  status("摄像头已关闭");
+}
+$("camMask").onclick = startCam;                       // 黑屏播放标 = 申请摄像头权限
+$("camToggle").onclick = () => stream ? stopCam() : startCam();
+
+// ---------- 历史记录半屏面板：点击菜单进入，上滑占满，左滑返回 ----------
+const sheet = $("historyPage");
+$("btnMenu").onclick = async () => { await renderHistory(); sheet.classList.add("show"); };
+$("btnBack").onclick = () => sheet.classList.remove("show", "full");
+$("sheetGrabber").onclick = () => sheet.classList.toggle("full");   // 点把手也可展开/收起
+
+let tsX = 0, tsY = 0;
+sheet.addEventListener("touchstart", e => {
+  tsX = e.touches[0].clientX; tsY = e.touches[0].clientY;
+}, { passive: true });
+sheet.addEventListener("touchend", e => {
+  const dx = e.changedTouches[0].clientX - tsX;
+  const dy = e.changedTouches[0].clientY - tsY;
+  if (dy < -50 && Math.abs(dx) < 60) sheet.classList.add("full");          // 上滑 → 占满
+  else if (dx < -50 && Math.abs(dy) < 60) sheet.classList.remove("show", "full");  // 左滑 → 返回
+  else if (dy > 50 && Math.abs(dx) < 60) sheet.classList.remove("full");   // 下滑 → 收回半屏
+}, { passive: true });
+
+// ---------- 取图：优先实时取景帧；无摄像头流时调起系统相机（微信等环境兜底） ----------
+function shotFromVideo() {
+  const v = $("video");
+  if (!stream || !v.videoWidth) return null;
+  const canvas = $("shotCanvas");
+  const dispAR = v.clientWidth / v.clientHeight;        // 与显示画面保持一致（所见即所得）
+  let sw = v.videoWidth, sh = v.videoHeight;
+  if (sw / sh > dispAR) sw = sh * dispAR; else sh = sw / dispAR;
+  const sx = (v.videoWidth - sw) / 2, sy = (v.videoHeight - sh) / 2;
+  canvas.width = Math.round(sw); canvas.height = Math.round(sh);
+  canvas.getContext("2d").drawImage(v, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.92);
+}
+
+function shotFromFile() {
+  return new Promise(res => {
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.setAttribute("accept", "image/*");
+    inp.setAttribute("capture", "environment");         // 调起系统相机
+    inp.onchange = () => {
+      const f = inp.files && inp.files[0];
+      if (!f) return res(null);
+      const img = new Image();
+      img.onload = () => {                               // 压到长边 1600，控制上传体积
+        const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+        const canvas = $("shotCanvas");
+        canvas.width = Math.round(img.naturalWidth * k);
+        canvas.height = Math.round(img.naturalHeight * k);
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(img.src);
+        res(canvas.toDataURL("image/jpeg", 0.92));
+      };
+      img.onerror = () => res(null);
+      img.src = URL.createObjectURL(f);
+    };
+    inp.click();
+  });
+}
+
+async function getShot() {
+  if (isWeChat) { status("微信内无法调用摄像头，请使用手机内置浏览器打开本页", true); return null; }
+  if (stream && $("video").videoWidth) return shotFromVideo();
+  status("正在调起相机...");
+  return shotFromFile();
+}
+
+// 保存到客户端 IndexedDB（本地 id），服务端不保存图片
+async function saveShot(dataUrl) {
+  const id = crypto.randomUUID ? crypto.randomUUID() : Date.now() + "-" + Math.random().toString(16).slice(2);
+  await dbSave({ id, image: dataUrl, text: null, ctime: Date.now() });
+  await renderHistory();
+  return id;
+}
+
+// ---------- 拍照动效：照片缩小飞入右侧菜单按钮 ----------
+function flyToMenu(dataUrl) {
+  const stage = document.querySelector(".stage").getBoundingClientRect();
+  const target = $("btnMenu").getBoundingClientRect();
+  const img = document.createElement("img");
+  img.src = dataUrl;
+  img.className = "fly-thumb";
+  Object.assign(img.style, {
+    left: stage.left + "px", top: stage.top + "px",
+    width: stage.width + "px", height: stage.height + "px",
+  });
+  document.body.appendChild(img);
+  const dx = target.left + target.width / 2 - (stage.left + stage.width / 2);
+  const dy = target.top + target.height / 2 - (stage.top + stage.height / 2);
+  const scale = Math.max(target.width / stage.width, 0.06);
+  requestAnimationFrame(() => requestAnimationFrame(() => {   // 双 rAF 确保过渡生效
+    img.style.transform = `translate(${dx}px, ${dy}px) scale(${scale})`;
+    img.style.opacity = ".25";
+    img.style.borderRadius = "50%";
+  }));
+  img.addEventListener("transitionend", () => {
+    img.remove();
+    const btn = $("btnMenu");                        // 落点弹跳反馈
+    btn.classList.remove("pop");
+    void btn.offsetWidth;                            // 重启动画
+    btn.classList.add("pop");
+  }, { once: true });
+}
+
+$("btnShot").onclick = async () => {            // 快门：仅拍照保存
+  const shot = await getShot();
+  if (!shot) return;
+  flyToMenu(shot);
+  await saveShot(shot);
+  status("已保存");
+};
+
+$("btnScanOcr").onclick = async () => {         // 扫描键：拍照并立即识别
+  const shot = await getShot();
+  if (!shot) return;
+  flyToMenu(shot);
+  await ocr(await saveShot(shot));
+};
+
+// ---------- OCR：图片二进制随请求直传，服务端即传即识 ----------
+function dataUrlToBlob(dataUrl) {
+  const [meta, b64] = dataUrl.split(",");
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: meta.slice(5, meta.indexOf(";")) });
+}
+
+// 单次 OCR 请求；返回 null 表示平台休眠/网关拦截（需唤醒后重试）
+async function ocrOnce(blob) {
+  const res = await fetch("/api/ocr", {
+    method: "POST",
+    headers: { "Content-Type": blob.type || "image/jpeg" },
+    body: blob,
+  });
+  if (res.status === 204 || res.status === 403 || res.status === 502 || res.status === 503) return null;
+  if (!res.ok) throw new Error("ocr failed");
+  return (await res.json()).full_text || "";
+}
+
+// 探测应用唤醒：GET / 返回 200 即就绪，最多等 maxMs 毫秒
+async function probeAlive(maxMs) {
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    try {
+      const res = await fetch("/", { cache: "no-store" });
+      if (res.ok) return true;
+    } catch {}
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  return false;
+}
+
+async function ocr(id) {
+  const rec = (await dbAll()).find(r => r.id === id);
+  if (!rec) { status("记录不存在", true); return; }
+  status("识别中，首次识别需加载模型，请耐心等候...");
+  try {
+    const blob = dataUrlToBlob(rec.image);
+    let text = await ocrOnce(blob);
+    if (text === null) {                       // 应用被平台休眠：等待唤醒后重试
+      status("应用正在唤醒，请稍候...", false, true);
+      if (!(await probeAlive(120000))) throw new Error("wake timeout");
+      status("已唤醒，正在识别...");
+      text = await ocrOnce(blob);
+      if (text === null) throw new Error("ocr failed");
+    }
+    rec.text = text;
+    await dbSave(rec);
+    await renderHistory();
+    status(text ? "识别完成" : "未识别到文字");
+  } catch (e) {
+    status("识别失败，请重试", true);
+  }
+}
+
+// ---------- 历史列表：左预览图 / 右文本 对照呈现 ----------
+const fmt = ts => {
+  const d = new Date(ts), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+};
+
+async function renderHistory() {
+  const list = await dbAll();
+  const box = $("historyList");
+  box.innerHTML = "";
+  if (!list.length) { box.innerHTML = '<div class="empty">暂无记录</div>'; return; }
+  for (const it of list) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const img = document.createElement("img");          // 左：预览图，点击看大图
+    img.src = it.image;
+    img.alt = "拍摄图";
+    img.onclick = () => { $("maskImg").src = it.image; $("mask").style.display = "flex"; };
+    const cell = document.createElement("div");
+    cell.className = "cell";
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = fmt(it.ctime);
+    const txt = document.createElement("div");          // 右：识别文本；未识别可点击识别，已识别点击复制
+    txt.className = "txt" + (it.text ? "" : " empty");
+    txt.textContent = it.text || "（未识别 · 点击识别）";
+    txt.onclick = async () => {
+      if (it.text) {
+        try { await navigator.clipboard.writeText(it.text); status("已复制到剪贴板"); }
+        catch { status("复制失败", true); }
+      } else await ocr(it.id);
+    };
+    cell.appendChild(meta);
+    cell.appendChild(txt);
+    row.appendChild(img);
+    row.appendChild(cell);
+    box.appendChild(row);
+  }
+}
+
+// ---------- 大图预览关闭 ----------
+$("mask").onclick = () => ($("mask").style.display = "none");
+
+// ---------- 保活：页面可见期间每 25s 探活 + 回到前台立即探活，防止应用被平台休眠 ----------
+setInterval(() => {
+  if (document.visibilityState === "visible") fetch("/", { cache: "no-store" }).catch(() => {});
+}, 25000);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") fetch("/", { cache: "no-store" }).catch(() => {});
+});
+
+renderHistory();
+</script>
+</body>
+</html>

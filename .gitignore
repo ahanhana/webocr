@@ -1,0 +1,13 @@
+# Python 虚拟环境
+.venv/
+venv/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+
+# PocketBay 临时部署包（由脚本即时重建，勿提交）
+pocketbay-deploy.zip
+
+# 本地运行时从 models.zip 解压出的模型目录
+models/
